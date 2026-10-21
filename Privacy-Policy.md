@@ -81,6 +81,6 @@ This Privacy Policy may be updated as the Bot's functionality or data practices 
 
 For questions, privacy concerns, or data deletion requests, contact the Bot's operator:
 
-**Operator:** [Your name or organization]  
-**Contact:** [Your preferred contact method or email]
+**Operator:** Johnnytan
+**Contact:** @johnny_tans on discord
 
