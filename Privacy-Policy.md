@@ -4,7 +4,7 @@
 
 ## 1. Introduction
 
-This Privacy Policy explains how Package Tracker Bot ("the Bot") collects, uses, stores, and shares information when you use its Discord commands and features.
+This Privacy Policy explains how PackageBot ("the Bot") collects, uses, stores, and shares information when you use its Discord commands and features.
 
 By using the Bot, you acknowledge the practices described in this policy. If you do not agree with this policy, please discontinue using the Bot.
 
