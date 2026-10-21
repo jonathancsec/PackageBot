@@ -19,8 +19,9 @@ _NEW_PACKAGE_COLUMNS = {
 _NEW_SETTINGS_COLUMNS = {
     "notifications_enabled": "INTEGER NOT NULL DEFAULT 1",
     "notify_channel_id": "TEXT",
+    "show_location": "INTEGER NOT NULL DEFAULT 1",
 }
-_SETTING_NAMES = {"public_responses", "notifications_enabled", "notify_channel_id"}
+_SETTING_NAMES = {"public_responses", "notifications_enabled", "notify_channel_id", "show_location"}
 
 
 async def _add_missing_columns(db, table, columns):
@@ -52,7 +53,8 @@ async def initialize_database():
                 user_id TEXT PRIMARY KEY,
                 public_responses INTEGER NOT NULL DEFAULT 1,
                 notifications_enabled INTEGER NOT NULL DEFAULT 1,
-                notify_channel_id TEXT
+                notify_channel_id TEXT,
+                show_location INTEGER NOT NULL DEFAULT 1
             )
         """)
 
@@ -82,7 +84,7 @@ async def initialize_database():
 async def get_settings(user_id):
     async with aiosqlite.connect(DATABASE) as db:
         async with db.execute("""
-            SELECT public_responses, notifications_enabled, notify_channel_id
+            SELECT public_responses, notifications_enabled, notify_channel_id, show_location
             FROM user_settings WHERE user_id = ?
         """, (user_id,)) as cursor:
             row = await cursor.fetchone()
@@ -92,12 +94,14 @@ async def get_settings(user_id):
             "public_responses": True,
             "notifications_enabled": True,
             "notify_channel_id": None,
+            "show_location": True,
         }
 
     return {
         "public_responses": bool(row[0]),
         "notifications_enabled": bool(row[1]),
         "notify_channel_id": row[2],
+        "show_location": bool(row[3]),
     }
 
 

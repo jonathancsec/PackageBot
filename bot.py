@@ -136,7 +136,11 @@ def limit_message() -> str:
     )
 
 
-def build_tracking_embed(info: TrackingInfo, label: Optional[str] = None) -> discord.Embed:
+def build_tracking_embed(
+    info: TrackingInfo,
+    label: Optional[str] = None,
+    show_location: bool = True
+) -> discord.Embed:
     emoji = status_emoji(info.milestone)
     embed = discord.Embed(
         title=f"{emoji} {label or 'Package Tracking'}",
@@ -149,11 +153,12 @@ def build_tracking_embed(info: TrackingInfo, label: Optional[str] = None) -> dis
 
     embed.add_field(name="🚚 Carrier", value=info.carrier, inline=True)
     embed.add_field(name="📊 Status", value=info.status_text, inline=True)
-    embed.add_field(
-        name="📍 Location",
-        value=latest.location if latest else "Unknown",
-        inline=True
-    )
+    if show_location:
+        embed.add_field(
+            name="📍 Location",
+            value=latest.location if latest else "Unknown",
+            inline=True
+        )
     embed.add_field(
         name="📝 Latest Update",
         value=(latest.status[:1000] if latest else "No events yet"),
@@ -173,7 +178,11 @@ def build_tracking_embed(info: TrackingInfo, label: Optional[str] = None) -> dis
     return embed
 
 
-def build_history_embed(info: TrackingInfo, label: Optional[str] = None) -> discord.Embed:
+def build_history_embed(
+    info: TrackingInfo,
+    label: Optional[str] = None,
+    show_location: bool = True
+) -> discord.Embed:
     embed = discord.Embed(
         title=f"📜 History: {label or info.tracking_number}",
         url=tracking_url(info.tracking_number),
@@ -186,7 +195,7 @@ def build_history_embed(info: TrackingInfo, label: Optional[str] = None) -> disc
         lines = []
         for event in info.events[:HISTORY_EVENT_COUNT]:
             line = f"{format_time(event)}: **{event.status[:200]}**"
-            if event.location != "Unknown":
+            if show_location and event.location != "Unknown":
                 line += f"\n📍 {event.location}"
             lines.append(line)
 
@@ -219,7 +228,13 @@ def settings_text(settings: dict) -> str:
         f"**Responses:** {'public' if settings['public_responses'] else 'private'}",
         f"**Notifications:** {'on' if settings['notifications_enabled'] else 'muted'}",
         f"**Send updates to:** {f'<#{channel_id}>' if channel_id else 'direct messages'}",
+        f"**Delivery location:** {'shown' if settings['show_location'] else 'hidden'}",
     ]
+    if not settings["show_location"]:
+        lines.append(
+            "-# Location fields are hidden, but a carrier's own event text "
+            "(e.g. \"Arrived at Springfield facility\") can still mention a place."
+        )
     if channel_id:
         lines.append(
             "-# Anyone who can see that channel can see your updates. "
@@ -436,6 +451,9 @@ class SettingsView(OwnedView):
             if self.settings["notifications_enabled"]
             else "Unmute notifications"
         )
+        self.toggle_location.label = (
+            "Hide location" if self.settings["show_location"] else "Show location"
+        )
         self.use_dms.disabled = not self.settings["notify_channel_id"]
 
     async def save(self, interaction: discord.Interaction, name: str, value):
@@ -458,6 +476,10 @@ class SettingsView(OwnedView):
             "notifications_enabled",
             not self.settings["notifications_enabled"]
         )
+
+    @discord.ui.button(label="Hide location", style=discord.ButtonStyle.secondary, row=0)
+    async def toggle_location(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.save(interaction, "show_location", not self.settings["show_location"])
 
     @discord.ui.button(label="Use DMs for updates", style=discord.ButtonStyle.secondary, row=0)
     async def use_dms(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -524,9 +546,11 @@ class PackageView(OwnedView):
 
     @discord.ui.button(label="📜 History", style=discord.ButtonStyle.secondary)
     async def show_history(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Read settings fresh so a change made after this message was sent still applies.
+        settings = await get_settings(str(self.user_id))
         await interaction.response.send_message(
-            embed=build_history_embed(self.info, self.label),
-            ephemeral=await ephemeral_for(self.user_id)
+            embed=build_history_embed(self.info, self.label, settings["show_location"]),
+            ephemeral=not settings["public_responses"]
         )
 
     @discord.ui.button(label="➕ Track this package", style=discord.ButtonStyle.success)
@@ -622,7 +646,8 @@ async def track(
     if await reject_if_rate_limited(interaction, "command"):
         return
 
-    ephemeral = await ephemeral_for(interaction.user.id)
+    settings = await get_settings(str(interaction.user.id))
+    ephemeral = not settings["public_responses"]
     await interaction.response.defer(ephemeral=ephemeral)
 
     try:
@@ -652,7 +677,7 @@ async def track(
     view = PackageView(interaction.user.id, info, saved_label, tracked=True)
     view.message = await interaction.followup.send(
         content=note,
-        embed=build_tracking_embed(info, saved_label),
+        embed=build_tracking_embed(info, saved_label, settings["show_location"]),
         view=view,
         ephemeral=ephemeral
     )
@@ -667,7 +692,8 @@ async def lookup(interaction: discord.Interaction, tracking_number: str):
     if await reject_if_rate_limited(interaction, "command"):
         return
 
-    ephemeral = await ephemeral_for(interaction.user.id)
+    settings = await get_settings(str(interaction.user.id))
+    ephemeral = not settings["public_responses"]
     await interaction.response.defer(ephemeral=ephemeral)
 
     try:
@@ -683,7 +709,7 @@ async def lookup(interaction: discord.Interaction, tracking_number: str):
 
     view = PackageView(interaction.user.id, info, label, tracked=already_tracked)
     view.message = await interaction.followup.send(
-        embed=build_tracking_embed(info, label),
+        embed=build_tracking_embed(info, label, settings["show_location"]),
         view=view,
         ephemeral=ephemeral
     )
@@ -698,7 +724,8 @@ async def history(interaction: discord.Interaction, tracking_number: str):
     if await reject_if_rate_limited(interaction, "command"):
         return
 
-    ephemeral = await ephemeral_for(interaction.user.id)
+    settings = await get_settings(str(interaction.user.id))
+    ephemeral = not settings["public_responses"]
     await interaction.response.defer(ephemeral=ephemeral)
 
     try:
@@ -710,7 +737,11 @@ async def history(interaction: discord.Interaction, tracking_number: str):
         return
 
     await interaction.followup.send(
-        embed=build_history_embed(info, existing["label"] if existing else None),
+        embed=build_history_embed(
+            info,
+            existing["label"] if existing else None,
+            settings["show_location"]
+        ),
         ephemeral=ephemeral
     )
 
