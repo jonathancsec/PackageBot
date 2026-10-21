@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
+# Optional: used only to remove old server-specific command registrations.
+GUILD_ID = os.getenv("GUILD_ID")
 
 
 class MyClient(discord.Client):
@@ -37,9 +38,20 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
+        # Remove old guild-only command registrations from the development server,
+        # if GUILD_ID is still configured. Commands are registered globally below.
+        if GUILD_ID:
+            try:
+                guild = discord.Object(id=int(GUILD_ID))
+                self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)
+            except ValueError:
+                logger.warning("GUILD_ID is not a valid integer; skipping old guild-command cleanup.")
+            except discord.HTTPException:
+                logger.exception("Could not clean up old server-specific slash commands.")
+
+        synced = await self.tree.sync()
+        logger.info("Synced %s global slash command(s).", len(synced))
         self.check_package_updates.start()
 
     @tasks.loop(minutes=15)
@@ -323,10 +335,17 @@ async def track(
             ephemeral=not public_responses
         )
 
-    except Exception as e:
+    except Exception:
+        # Keep API, database, and internal error details in server logs, not Discord.
+        logger.exception(
+            "Package tracking failed for user %s and tracking number %s",
+            interaction.user.id,
+            tracking_number
+        )
         await interaction.followup.send(
-            f"❌ Something went wrong:\n```text\n{e}\n```",
-            ephemeral=not public_responses
+            "❌ I couldn't retrieve tracking information right now. "
+            "Please check the tracking number and try again later.",
+            ephemeral=True
         )
 
 
