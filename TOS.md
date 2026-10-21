@@ -4,7 +4,7 @@
 
 ## 1. Acceptance of Terms
 
-These Terms of Service ("Terms") govern your use of Package Tracker Bot ("the Bot"), a Discord application that provides package tracking and shipment status notifications.
+These Terms of Service ("Terms") govern your use of PackageBot ("the Bot"), a Discord application that provides package tracking and shipment status notifications.
 
 By using the Bot, you agree to these Terms. If you do not agree, you must stop using the Bot.
 
