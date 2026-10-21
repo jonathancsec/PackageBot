@@ -123,6 +123,18 @@ def package_name(label: Optional[str], tracking_number: str) -> str:
     return f"**{label}** (`{tracking_number}`)" if label else f"`{tracking_number}`"
 
 
+def tracking_channel(interaction: discord.Interaction) -> Optional[str]:
+    """The server channel a package is being tracked from (None in DMs)."""
+    if interaction.guild_id and interaction.channel_id:
+        return str(interaction.channel_id)
+    return None
+
+
+def update_channel(sub: dict) -> Optional[str]:
+    """Post in the original channel only if the user keeps responses public; otherwise DM."""
+    return sub["channel_id"] if sub["public_responses"] else None
+
+
 def format_time(event: TrackingEvent) -> str:
     if event.occurred_at:
         return f"<t:{int(event.occurred_at.timestamp())}:f>"
@@ -223,24 +235,16 @@ def build_update_message(name: str, previous: str, current: str, milestone: str)
 
 
 def settings_text(settings: dict) -> str:
-    channel_id = settings["notify_channel_id"]
-    lines = [
+    return "\n".join([
         f"**Responses:** {'public' if settings['public_responses'] else 'private'}",
         f"**Notifications:** {'on' if settings['notifications_enabled'] else 'muted'}",
-        f"**Send updates to:** {f'<#{channel_id}>' if channel_id else 'direct messages'}",
         f"**Delivery location:** {'shown' if settings['show_location'] else 'hidden'}",
-    ]
-    if not settings["show_location"]:
-        lines.append(
-            "-# Location fields are hidden, but a carrier's own event text "
-            "(e.g. \"Arrived at Springfield facility\") can still mention a place."
-        )
-    if channel_id:
-        lines.append(
-            "-# Anyone who can see that channel can see your updates. "
-            "If I can't post there, I'll fall back to DMs."
-        )
-    return "\n".join(lines)
+        "-# Updates are posted in the channel where you tracked the package when your "
+        "responses are public. With private responses (or in DMs) they're sent by DM.",
+    ] + ([
+        "-# Location fields are hidden, but a carrier's own event text "
+        "(e.g. \"Arrived at Springfield facility\") can still mention a place."
+    ] if not settings["show_location"] else []))
 
 
 async def ephemeral_for(user_id: int) -> bool:
@@ -329,7 +333,7 @@ class MyClient(discord.Client):
             if sub["notifications_enabled"]:
                 await self.notify_user(
                     user_id,
-                    sub["notify_channel_id"],
+                    update_channel(sub),
                     build_update_message(name, previous, current, info.milestone),
                 )
             return
@@ -343,7 +347,7 @@ class MyClient(discord.Client):
             if sub["notifications_enabled"]:
                 await self.notify_user(
                     user_id,
-                    sub["notify_channel_id"],
+                    update_channel(sub),
                     f"🗄️ {name} hasn't had an update in {STALE_DAYS} days, so I've stopped "
                     "tracking it. Use `/track` to start again.",
                 )
@@ -433,11 +437,9 @@ class OwnedView(discord.ui.View):
 
 
 class SettingsView(OwnedView):
-    def __init__(self, user_id: int, settings: dict, in_guild: bool):
+    def __init__(self, user_id: int, settings: dict):
         super().__init__(user_id)
         self.settings = settings
-        if not in_guild:
-            self.remove_item(self.pick_channel)
         self.refresh_buttons()
 
     def refresh_buttons(self):
@@ -454,7 +456,6 @@ class SettingsView(OwnedView):
         self.toggle_location.label = (
             "Hide location" if self.settings["show_location"] else "Show location"
         )
-        self.use_dms.disabled = not self.settings["notify_channel_id"]
 
     async def save(self, interaction: discord.Interaction, name: str, value):
         self.settings[name] = value
@@ -465,11 +466,11 @@ class SettingsView(OwnedView):
             view=self
         )
 
-    @discord.ui.button(label="Make responses private", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Make responses private", style=discord.ButtonStyle.primary)
     async def toggle_visibility(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.save(interaction, "public_responses", not self.settings["public_responses"])
 
-    @discord.ui.button(label="Mute notifications", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Mute notifications", style=discord.ButtonStyle.secondary)
     async def toggle_notifications(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.save(
             interaction,
@@ -477,51 +478,9 @@ class SettingsView(OwnedView):
             not self.settings["notifications_enabled"]
         )
 
-    @discord.ui.button(label="Hide location", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Hide location", style=discord.ButtonStyle.secondary)
     async def toggle_location(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.save(interaction, "show_location", not self.settings["show_location"])
-
-    @discord.ui.button(label="Use DMs for updates", style=discord.ButtonStyle.secondary, row=0)
-    async def use_dms(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.save(interaction, "notify_channel_id", None)
-
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        channel_types=[discord.ChannelType.text],
-        placeholder="Send updates to a server channel…",
-        min_values=1,
-        max_values=1,
-        row=1,
-    )
-    async def pick_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        channel = interaction.guild.get_channel(select.values[0].id) if interaction.guild else None
-        me = interaction.guild.me if interaction.guild else None
-
-        if channel is None or me is None:
-            await interaction.response.send_message(
-                "I couldn't look up that channel. Please try another one.",
-                ephemeral=True
-            )
-            return
-
-        bot_perms = channel.permissions_for(me)
-        user_perms = channel.permissions_for(interaction.user)
-
-        if not (bot_perms.view_channel and bot_perms.send_messages):
-            await interaction.response.send_message(
-                f"I don't have permission to post in {channel.mention}.",
-                ephemeral=True
-            )
-            return
-
-        if not (user_perms.view_channel and user_perms.send_messages):
-            await interaction.response.send_message(
-                f"You can't post in {channel.mention} yourself, so I can't send your updates there.",
-                ephemeral=True
-            )
-            return
-
-        await self.save(interaction, "notify_channel_id", str(channel.id))
 
 
 class PackageView(OwnedView):
@@ -562,6 +521,7 @@ class PackageView(OwnedView):
             self.info.status_text,
             self.label,
             archived=self.info.is_delivered,
+            channel_id=tracking_channel(interaction),
         )
 
         if result == "limit":
@@ -660,6 +620,7 @@ async def track(
             info.status_text,
             label,
             archived=info.is_delivered,
+            channel_id=tracking_channel(interaction),
         )
     except Exception as exc:
         await report_tracking_failure(interaction, exc, tracking_number)
@@ -862,7 +823,7 @@ async def settings(interaction: discord.Interaction):
         return
 
     user_settings = await get_settings(str(interaction.user.id))
-    view = SettingsView(interaction.user.id, user_settings, in_guild=interaction.guild is not None)
+    view = SettingsView(interaction.user.id, user_settings)
 
     await interaction.response.send_message(
         settings_text(user_settings),

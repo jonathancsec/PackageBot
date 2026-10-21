@@ -15,13 +15,13 @@ _NEW_PACKAGE_COLUMNS = {
     "paused": "INTEGER NOT NULL DEFAULT 0",
     "archived": "INTEGER NOT NULL DEFAULT 0",
     "last_changed": "INTEGER NOT NULL DEFAULT 0",
+    "channel_id": "TEXT",
 }
 _NEW_SETTINGS_COLUMNS = {
     "notifications_enabled": "INTEGER NOT NULL DEFAULT 1",
-    "notify_channel_id": "TEXT",
     "show_location": "INTEGER NOT NULL DEFAULT 1",
 }
-_SETTING_NAMES = {"public_responses", "notifications_enabled", "notify_channel_id", "show_location"}
+_SETTING_NAMES = {"public_responses", "notifications_enabled", "show_location"}
 
 
 async def _add_missing_columns(db, table, columns):
@@ -45,7 +45,8 @@ async def initialize_database():
                 label TEXT,
                 paused INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0,
-                last_changed INTEGER NOT NULL DEFAULT 0
+                last_changed INTEGER NOT NULL DEFAULT 0,
+                channel_id TEXT
             )
         """)
         await db.execute("""
@@ -53,7 +54,6 @@ async def initialize_database():
                 user_id TEXT PRIMARY KEY,
                 public_responses INTEGER NOT NULL DEFAULT 1,
                 notifications_enabled INTEGER NOT NULL DEFAULT 1,
-                notify_channel_id TEXT,
                 show_location INTEGER NOT NULL DEFAULT 1
             )
         """)
@@ -84,7 +84,7 @@ async def initialize_database():
 async def get_settings(user_id):
     async with aiosqlite.connect(DATABASE) as db:
         async with db.execute("""
-            SELECT public_responses, notifications_enabled, notify_channel_id, show_location
+            SELECT public_responses, notifications_enabled, show_location
             FROM user_settings WHERE user_id = ?
         """, (user_id,)) as cursor:
             row = await cursor.fetchone()
@@ -93,15 +93,13 @@ async def get_settings(user_id):
         return {
             "public_responses": True,
             "notifications_enabled": True,
-            "notify_channel_id": None,
             "show_location": True,
         }
 
     return {
         "public_responses": bool(row[0]),
         "notifications_enabled": bool(row[1]),
-        "notify_channel_id": row[2],
-        "show_location": bool(row[3]),
+        "show_location": bool(row[2]),
     }
 
 
@@ -126,10 +124,13 @@ async def set_setting(user_id, name, value):
 
 # ---------- Packages ----------
 
-async def add_package(user_id, tracking_number, carrier, status, label=None, archived=False):
+async def add_package(
+    user_id, tracking_number, carrier, status, label=None, archived=False, channel_id=None
+):
     """
     Returns (result, label) where result is "added", "updated" or "limit".
     Archived (e.g. already delivered) packages don't count toward the limit.
+    channel_id is the server channel the package was tracked in (None for DMs).
     """
     now = int(time.time())
 
@@ -153,8 +154,9 @@ async def add_package(user_id, tracking_number, carrier, status, label=None, arc
 
         await db.execute("""
             INSERT INTO packages
-                (user_id, tracking_number, carrier, status, label, archived, paused, last_changed)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                (user_id, tracking_number, carrier, status, label, archived, paused,
+                 last_changed, channel_id)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
             ON CONFLICT (user_id, tracking_number)
             DO UPDATE SET
                 carrier = excluded.carrier,
@@ -162,13 +164,14 @@ async def add_package(user_id, tracking_number, carrier, status, label=None, arc
                 label = COALESCE(excluded.label, packages.label),
                 archived = excluded.archived,
                 paused = 0,
+                channel_id = excluded.channel_id,
                 last_changed = CASE
                     WHEN packages.status IS NOT excluded.status
                          OR packages.archived != excluded.archived
                     THEN excluded.last_changed
                     ELSE packages.last_changed
                 END
-        """, (user_id, tracking_number, carrier, status, label, int(archived), now))
+        """, (user_id, tracking_number, carrier, status, label, int(archived), now, channel_id))
 
         async with db.execute("""
             SELECT label FROM packages WHERE user_id = ? AND tracking_number = ?
@@ -216,8 +219,9 @@ async def get_active_subscriptions():
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT p.user_id, p.tracking_number, p.status, p.label, p.last_changed,
+                   p.channel_id,
                    COALESCE(s.notifications_enabled, 1) AS notifications_enabled,
-                   s.notify_channel_id
+                   COALESCE(s.public_responses, 1) AS public_responses
             FROM packages p
             LEFT JOIN user_settings s ON s.user_id = p.user_id
             WHERE p.archived = 0 AND p.paused = 0
