@@ -15,13 +15,6 @@ To invite the bot:
 5.  Review the requested permissions and click **Authorize**.
 6.  Open your server and use the bot's slash commands.
 
-> **Invite link setup:** Replace `YOUR_DISCORD_INVITE_LINK_HERE` with
-> your bot's authorization URL. You can generate one in the [Discord
-> Developer Portal](https://discord.com/developers/applications): select
-> your application, open **OAuth2 → URL Generator**, select the `bot`
-> and `applications.commands` scopes, choose only the permissions the
-> bot needs, and copy the generated URL.
-
 ## ✨ What Does It Do?
 
 Package Tracker Bot helps you check and monitor shipment progress
