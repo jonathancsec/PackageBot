@@ -1,3 +1,4 @@
-discord.py
-python-dotenv
-aiohttp
+discord.py>=2.3
+aiohttp>=3.9
+aiosqlite>=0.19
+python-dotenv>=1.0
